@@ -1,0 +1,19 @@
+opam-version : "2.0"
+version      : "1.0"
+maintainer   : "rinderknecht@free.fr"
+authors      : [ "Christian Rinderknecht" ]
+homepage     : "https://github.com/rinderknecht/TextEdit"
+bug-reports  : "https://github.com/rinderknecht/TextEdit/issues"
+dev-repo     : "git+https://github.com/rinderknecht/TextEdit.git"
+license      : "MIT"
+synopsis     : "DSLs for editing text files"
+depends      : [ "dune" ]
+
+build        : [
+                [ "sh" "-c" "printf 'let version = \"%s\"' \"$(git describe --always --dirty --abbrev=0)\" > Version.ml" ]
+                [ "dune" "build" "-p" name "-j" jobs ]
+               ]
+
+url {
+  src: "https://gitlab.com/rinderknecht/TextEdit/-/archive/master/TextEdit.tar.gz"
+}

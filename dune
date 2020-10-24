@@ -1,0 +1,12 @@
+(ocamllex Edit)
+
+(library
+  (name TextEdit)
+  (public_name TextEdit)
+  (libraries SourceLoc UnionFind)
+  (wrapped true)
+  (modules Edit))
+
+;; (test
+;;  (modules TextEditMain)
+;;  (name TextEditMain))
