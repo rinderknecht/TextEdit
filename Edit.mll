@@ -37,69 +37,91 @@ module Make (Trans : TRANS) =
 
     module IO_map =
       struct
-        type binding = {
+        type binding = <
           lift : TSet.t HMap.t;
           drop : handle TMap.t
-        }
+        >
 
-        type t = {
+        type input  = Handle.t
+        type output = Handle.t
+
+        type t = <
           input     : binding;
           output    : binding;
-          to_string : t -> string  (* For debug *)
-        }
+          to_string : string;
+          set_in    : binding -> t;
+          set_out   : binding -> t
+        >
 
         type io_map = t
 
-        let init mk_str =
-          let empty = {lift = HMap.empty; drop = TMap.empty}
-          in {input = empty; output = empty; to_string = mk_str}
+        (* Pretty-printing of I/O maps *)
 
-        (* Adding handlers *)
+        let print_drop_entry buffer trans handle =
+          let trans  = Trans.to_string trans
+          and handle = Handle.to_string handle in
+          Buffer.add_string buffer
+          @@ Printf.sprintf "%s: %s\n" trans handle
 
-        let add_in trans handle io =
-          let t_set = try HMap.find handle io.input.lift with
-                        Not_found -> TSet.empty in
-          let lift  = HMap.add handle (TSet.add trans t_set) io.input.lift
-          and drop  = TMap.add trans handle io.input.drop
-          in {io with input = {lift; drop}}
+        let print_lift_entry buffer handle tset =
+          let tset   = TSet.elements tset in
+          let tset   = List.map Trans.to_string tset in
+          let tset   = String.concat ", " tset
+          and handle = Handle.to_string handle in
+          let entry  = Printf.sprintf "     %s -> {%s}\n" handle tset
+          in Buffer.add_string buffer entry
 
-        let add_out trans handle io =
-          let t_set = try HMap.find handle io.output.lift with
-                        Not_found -> TSet.empty in
-          let lift  = HMap.add file (TSet.add trans t_set) io.output.lift
-          and drop  = TMap.add trans file io.output.drop
-          in {io with output = {lift; drop}}
-
-        type input  = handle
-        type output = handle
-
-        let add (input, trans, output) io =
-          add_out trans output @@ add_in trans input io
-        (* Pretty-printing of I/O maps (of type [io_map]) *)
-
-        let print_trans buffer to_string trans handle =
-          let s = Printf.sprintf "%s: %s\n" (to_string trans) handle
-          in Buffer.add_string buffer s
-
-        let print_handle buffer to_string handle tree =
-          let show_trans tree = Buffer.add_string (to_string tree ^ ", ")
-          in Buffer.add_string buffer (Printf.sprintf "%s -> {" handle);
-             TSet.iter (show_trans buffer) tree;
-             Buffer.add_string buffer "}"
-
-        let print_bindings buffer to_string {lift; drop} =
+        let print_bindings buffer binding =
           Buffer.add_string buffer " * Lift:\n";
-          HMap.iter (print_handle buffer to_string) lift;
+          HMap.iter (print_lift_entry buffer) binding#lift;
           Buffer.add_string buffer " * Drop:\n";
-          TMap.iter (print_trans buffer to_string) drop
+          TMap.iter (print_drop_entry) binding#drop
 
-        let print io =
-          let buffer = Buffer.create 131 in
-          Buffer.add_string buffer "Displaying input:";
-          print_bindings buffer io.to_string io.input;
-          Buffer.add_string buffer "Displaying output:";
-          print_bindings buffer io.to_string io.output;
-          buffer
+        let empty =
+          let empty_binding =
+            object
+              method lift = HMap.empty
+              method drop = TMap.empty
+            end in
+          object (self)
+            val input     = empty_binding
+            method input  = input
+            val output    = empty_binding
+            method output = output
+
+            method to_string =
+              let buffer = Buffer.create 131 in
+              Buffer.add_string buffer "Input:\n";
+              print_bindings buffer self.input;
+              Buffer.add_string buffer "Output:\n";
+              print_bindings buffer self.output;
+              Buffer.contents buffer
+
+            method add_out trans handle =
+              let t_set = try HMap.find handle output#lift with
+                            Not_found -> TSet.empty in
+              let lift  = HMap.add handle (TSet.add trans t_set) output#lift
+              and drop  = TMap.add trans handle output#drop in
+              let binding = object
+                              method lift = lift
+                              method drop = drop
+                            end
+              in {< output = binding >}
+
+            method add_in trans handle =
+              let t_set = try HMap.find handle input#lift with
+                            Not_found -> TSet.empty in
+              let lift  = HMap.add handle (TSet.add trans t_set) input#lift
+              and drop  = TMap.add trans handle input#drop in
+              let binding = object
+                              method lift = lift
+                              method drop = drop
+                            end
+              in {< input = binding >}
+
+            method add (input, trans, output) =
+              (self#add_in trans input)#add_out trans output
+          end
       end
 
     (* I/O Descriptors *)
@@ -110,7 +132,7 @@ module Make (Trans : TRANS) =
 
         type in_desc  = (Pos.t * Buffer.t) TMap.t
         type out_desc = Buffer.t TMap.t
-        type desc     = {in_desc : in_desc; out_desc : out_desc}
+        type desc     = <in_desc : in_desc; out_desc : out_desc>
 
         (* From I/O maps to I/O descriptors
 

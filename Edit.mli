@@ -1,16 +1,15 @@
-(* Editing text files functionally *)
+(* Editing text files *)
 
-(* This module offers a way to edit text files in a functional way.
-   Simply put, the contents of a set of texts is used to create new
-   texts.
+(* Simply put, a set of texts is used to create new texts, either by
+   creating new texts or by modifying them in place. Such operation is
+   called here an _edit_.
 
-     The use of immutable texts to create new texts is called here a_
-   functional edit_. An edit combines several _transforms_. A
-   transform is a pure function from one text to another, the latter
-   being considered a modified version of the former. As a given input
-   can be shared amongst several transforms and several transforms can
-   target the same output text, we can define edits on multiple inputs
-   and multiple outputs.
+     An edit combines several _transforms_. A transform is a function
+   from one text to another, the latter being considered a modified
+   version of the former. As a given input can be shared amongst
+   several transforms and several transforms can target the same
+   output text, we can define edits on multiple inputs and multiple
+   outputs.
 
      The specification of edits is done by means of abstract programs
    whose evaluation on input strings produces output string
@@ -34,87 +33,87 @@
 module Pos = SourceLoc.Pos
 module Partition = UnionFind.Partition
 
-(* Transforms *)
+(* Ordered Types *)
 
-module type TRANS =
+module type ORD =
   sig
     type t
-    type trans = t
 
     val compare   : t -> t -> int
     val equal     : t -> t -> bool
     val to_string : t -> string
   end
 
-module Make (Trans : TRANS) :
+module Make (Trans : ORD) (Handle : ORD) :
  sig
    (* As explained above, inputs and outputs are texts. To denote them
       and use them as keys in maps, we need to refer to them by means
       of unique names, as we would do with files. Those names are
       called here _handles_. *)
 
-   type handle = string
-
-   module HMap : Map.S with type key = handle
+   module HMap : Map.S with type key = Handle.t
    module TSet : Set.S with type elt = Trans.t
    module TMap : Map.S with type key = Trans.t
    module TEq  : Partition.S with type item = Trans.t
 
    (* I/O Maps *)
 
+   (* The connection between transforms and their input and output
+      (called "handles" is implemented by _I/O maps_. *)
+
    module IO_map :
      sig
-       (* We need now to connect transforms and handles.
-
-            The type [binding] describes a two-way mapping between
+       (* The type [binding] describes a two-way mapping between
           handles and transforms, both for input and output.
 
             * The field [lift] maps a handle to a set of transforms
-              (see module [PolySet] in library RedBlackTrees), because
-              a handle can be used by multiple transforms, either as
-              input or output.
+              because a handle can be used by multiple transforms,
+              either as input or output.
 
             * Conversely, the field [drop] maps a transform to a
-              handle, as each transform is associated to one handle,
-              either as input or output. *)
+              handle, as each transform is associated to one input
+              handle and one output handle. *)
 
-       type binding = {
+       type binding = <
          lift : TSet.t HMap.t;
-         drop : handle TMap.t
-       }
+         drop : Handle.t TMap.t
+       >
 
        (* The type [t] gathers bindings for input and output. We call
           it here an _I/O map_. *)
 
-       type t = {
+       type input  = Handle.t
+       type output = Handle.t
+
+       type t = <
          input     : binding;
          output    : binding;
-         to_string : t -> string  (* For debug *)
-       }
+         to_string : string;
+         set_in    : binding -> t;
+         set_out   : binding -> t;
+         add       : input * Trans.t * output -> t
+       >
 
        type io_map = t
 
-       (* The value of [init to_string] is an I/O map initialised with
-          empty bindings and the function [to_string] that provides a
-          string representing a transform. *)
+       (* The value of [empty] is an I/O map initialised with empty
+          bindings.*)
 
-       val init : (t -> string) -> t
+       val empty : t
 
        (* The value of [add (input, trans, output) io] is a copy of
           the I/O map [io] updated with the transform [trans] from its
           input handle [input] to its output handle
           [output]. Transforms are defined on a single input and
           single output, and subsequent calls with the same transform
-          will replace any previous definition. *)
-
-       type input  = handle
-       type output = handle
-
-       val add : (input * Trans.t * output) -> t -> t
+          will replace any previous definition. Note that we do not
+          distinghush between input and output handles, in other
+          words, they have the same type, and this means that an input
+          can be extended (only) by its own editing. *)
 
        (* Printing of I/O maps (for debug) *)
 
-       val print_io_map : t -> Buffer.t
+       val print : t -> Buffer.t
      end
 
    (* Descriptors *)
@@ -125,35 +124,31 @@ module Make (Trans : TRANS) :
 
    module IO_desc :
      sig
-       (* Handles are mapped to string buffers of type [Buffer.t]. In
-          the case of input, those buffers are coupled with a position
-          in them corresponding to the last read character. Note that
-          the position is encoded by a value of type [Pos.t], as it
-          would be in a file, because we want to be able to express
+       (* Input handles are mapped to string buffers of type
+          [Buffer.t], coupled with a position in them corresponding to
+          the last read character. Note that the position is encoded
+          by a value of type [Pos.t], as it would be in a lexing
+          buffer of type [Lexing.lexbuf] (indeed, [Pos.t] is based on
+          [Lexing.position]), because we want to be able to express
           where edits occur in terms of lines and columns or
-          horizontal offsets. This is enough to resume resume reading
-          from where we left. *)
+          horizontal offsets. This additional position enables to
+          resume reading from where we left. *)
 
-       type in_desc  = (Pos.t * Buffer.t) TMap.t
+       type in_desc  = (Buffer.t * Pos.t) HMap.t
 
        (* Contrary to input descriptors, output descriptor do not
           contain a position in the string buffer, because we always
           append to it (so the position is implicitly the last
           character in the buffer). *)
 
-       type out_desc = Buffer.t TMap.t
+       type out_desc = Buffer.t HMap.t
 
        (* The type [t] gathers I/O descriptors for inputs and
           outputs. *)
 
-       type t = {in_desc : in_desc; out_desc : out_desc}
+       type t = <in_desc : in_desc; out_desc : out_desc>
 
        type io_desc = t
-
-     (* An I/O descriptor are made from an I/O map and a partition of
-        classes of equivalent transformations. *)
-
-       val mk_desc : IO_map.t -> TEq.partition -> io_desc
      end
 
    (* A Low-Level DSL for editing *)
@@ -220,10 +215,10 @@ module Make (Trans : TRANS) :
 
        val check : t -> (unit, Pos.t * Pos.t) Stdlib.result
 
-       (* The call [show ~offsets io edits] prints the edits [edits]
+       (* The call [show ~offsets io edit] prints the edit [edit]
           interpreted with respect to the I/O map [io]. *)
 
-       val show : offsets:bool -> IO_map.t -> edit list -> Buffer.t
+       val show : offsets:bool -> IO_map.t -> edit -> Buffer.t
 
        (* Making the I/O descriptors and optionally optimising lists
           of edits by merging them pairwise whenever possible, like a
@@ -232,6 +227,8 @@ module Make (Trans : TRANS) :
           which tries to merge pairwise edits that are sequentially
           composable, in order to minimise the number of passes on a
           given input source.
+
+          TODO: WHY A LIST ???
 
             The value of [build ~opt io edits] is a pair whose first
           component is an I/O descriptor, of type ['trans desc]. If
@@ -249,15 +246,21 @@ module Make (Trans : TRANS) :
        val build :
          ?opt:bool ->
          IO_map.t ->
-         edit list ->           (* TODO: WHY A LIST ??? *)
-         IO_desc.t * edit list
+         edit ->
+         IO_desc.t * edit
+
+       val optimise : IO_desc.t -> TEq.partition -> IO_desc.t
 
        (* The evaluation of the call [apply edit desc] applies the
           edit [edit], using the I/O descriptors [desc]. The result is
           a string buffer and, in case of error, a partial string
           buffer may be returned. *)
 
-       val apply : edit -> IO_desc.t -> (Buffer.t, Buffer.t option) result
+ (* val apply : edit -> IO_desc.t -> (Buffer.t, Buffer.t option) result *)
+
+       type env = <map : IO_map.t; desc : IO_desc.t>
+
+       val eval : env -> edit -> unit
      end
 
    (* Filters
