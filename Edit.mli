@@ -56,65 +56,6 @@ module Make (Trans : ORD) (Handle : ORD) :
    module TMap : Map.S with type key = Trans.t
    module TEq  : Partition.S with type item = Trans.t
 
-   (* I/O Maps *)
-
-   (* The connection between transforms and their input and output
-      (called "handles" is implemented by _I/O maps_. *)
-
-   module IO_map :
-     sig
-       (* The type [binding] describes a two-way mapping between
-          handles and transforms, both for input and output.
-
-            * The field [lift] maps a handle to a set of transforms
-              because a handle can be used by multiple transforms,
-              either as input or output.
-
-            * Conversely, the field [drop] maps a transform to a
-              handle, as each transform is associated to one input
-              handle and one output handle. *)
-
-       type binding = <
-         lift : TSet.t HMap.t;
-         drop : Handle.t TMap.t
-       >
-
-       (* The type [t] gathers bindings for input and output. We call
-          it here an _I/O map_. *)
-
-       type input  = Handle.t
-       type output = Handle.t
-
-       type t = <
-         input     : binding;
-         output    : binding;
-         to_string : string;
-         set_in    : binding -> t;
-         set_out   : binding -> t;
-         add       : input * Trans.t * output -> t
-       >
-
-       type io_map = t
-
-       (* The value of [empty] is an I/O map initialised with empty
-          bindings.*)
-
-       val empty : t
-
-       (* The value of [add (input, trans, output) io] is a copy of
-          the I/O map [io] updated with the transform [trans] from its
-          input handle [input] to its output handle
-          [output]. Transforms are defined on a single input and
-          single output, and subsequent calls with the same transform
-          will replace any previous definition. Note that we do not
-          distinghush between input and output handles, in other
-          words, they have the same type, and this means that an input
-          can be extended (only) by its own editing. *)
-
-       (* Printing of I/O maps (for debug) *)
-
-       val print : t -> Buffer.t
-     end
 
    (* Descriptors *)
 

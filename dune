@@ -5,7 +5,7 @@
   (public_name TextEdit)
   (libraries SourceLoc UnionFind)
   (wrapped true)
-  (modules Edit))
+  (modules IO_map IO_desc Plain))
 
 ;; (test
 ;;  (modules TextEditMain)

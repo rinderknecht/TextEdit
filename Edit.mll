@@ -630,29 +630,29 @@ module Make (Trans : TRANS) =
       Copy (_,pos,next) | Skip (_,pos,next) when Pos.is_min pos ->
         reduce io next
 
-    | Copy (trans1,pos1, (Skip (trans2,pos2,sub) as next)) when pos1 = pos2 ->
+    | Copy (trans1, pos1, (Skip (trans2, pos2, sub) as next)) when pos1 = pos2 ->
         if   eq_input io trans1 trans2
-        then reduce io (Copy (trans1,pos1,sub))
+        then reduce io (Copy (trans1, pos1, sub))
         else Copy (trans1, pos1, reduce io next)
-    | Copy (trans1,pos1, (Copy (trans2,pos2,sub) as next)) when pos1 = pos2 ->
+    | Copy (trans1, pos1, (Copy (trans2, pos2, sub) as next)) when pos1 = pos2 ->
         if   eq_io io trans1 trans2
-        then reduce io (Copy(trans1,pos1,sub))
+        then reduce io (Copy (trans1, pos1, sub))
         else Copy (trans1, pos1, reduce io next)
-    | Skip (trans1,pos1, (Copy (trans2,pos2,sub) as next)) when pos1 = pos2 ->
+    | Skip (trans1, pos1, (Copy (trans2, pos2, sub) as next)) when pos1 = pos2 ->
         if   eq_input io trans1 trans2
-        then reduce io (Skip(trans1,pos1,sub))
+        then reduce io (Skip (trans1, pos1, sub))
         else Skip (trans1, pos1, reduce io next)
-    | Skip (trans1,pos1, (Skip (trans2,pos2,sub) as next)) when pos1 = pos2 ->
+    | Skip (trans1, pos1, (Skip (trans2, pos2, sub) as next)) when pos1 = pos2 ->
         if   eq_io io trans1 trans2
-        then reduce io (Skip (trans1,pos1,sub))
+        then reduce io (Skip (trans1, pos1, sub))
         else Skip (trans1, pos1, reduce io next)
 
-    | Copy (trans1,stop1, (Copy (trans2,_,_) as next)) ->
+    | Copy (trans1, stop1, (Copy (trans2, _, _) as next)) ->
         if   eq_io io trans1 trans2
         then reduce io next
         else Copy (trans1, stop1, reduce io next)
-    | Copy (trans,stop, Write (_,"",next)) ->
-        reduce io (Copy (trans,stop,next))
+    | Copy (trans, stop, Write (_, "", next)) ->
+        reduce io (Copy (trans, stop, next))
 
     | Skip (trans1,stop1, (Skip (trans2,_,_) as next)) ->
         if   eq_input io trans1 trans2
@@ -660,20 +660,20 @@ module Make (Trans : TRANS) =
         else Skip (trans1, stop1, reduce io next)
     | Skip (trans1,stop, Write (trans2,text,next)) ->
         reduce io (Write (trans2,text, Skip(trans1,stop,next)))
-    | Skip (_,stop,_) when Pos.is_max stop -> Null
-    | Skip (_,_,Null) -> Null
+    | Skip (_, stop, _) when Pos.is_max stop -> Null
+    | Skip (_, _, Null) -> Null
 
-    | Write (_,"",next) -> reduce io next
-    | Write (trans1,text1, (Write (trans2,text2,edit) as next)) ->
+    | Write (_, "", next) -> reduce io next
+    | Write (trans1, text1, (Write (trans2, text2, edit) as next)) ->
         if   eq_output io trans1 trans2
         then reduce io (Write (trans1, text1 ^ text2, edit))
         else Write (trans1, text1, reduce io next)
 
-    | Copy  (trans,stop,edit) -> Copy  (trans, stop, reduce io edit)
-    | Skip  (trans,stop,edit) -> Skip  (trans, stop, reduce io edit)
-    | Goto  (trans,char,edit) -> Goto  (trans, char, reduce io edit)
-    | Write (trans,text,edit) -> Write (trans, text, reduce io edit)
-    | Null                    -> Null
+    | Copy  (trans, stop, edit) -> Copy  (trans, stop, reduce io edit)
+    | Skip  (trans, stop, edit) -> Skip  (trans, stop, reduce io edit)
+    | Goto  (trans, char, edit) -> Goto  (trans, char, reduce io edit)
+    | Write (trans, text, edit) -> Write (trans, text, reduce io edit)
+    | Null                      -> Null
 
     (* Merging pairs of edits
 
