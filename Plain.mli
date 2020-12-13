@@ -22,9 +22,9 @@ module type ORD =
 
 module type S =
   sig
-    (* An edit is parameterised by a set of transforms. More
-       precisely, the type of an edit should be a sum type whose
-       variants denote each a transform. This enables an edit to
+    (* An edit is parameterised by a set of transforms. For example,
+       the type of an edit could be a sum type whose variants denote
+       each a transform. This parameterisation enables an edit to
        combine multiple transforms. *)
 
     module IO_map : IO_map.S
@@ -71,11 +71,8 @@ module type S =
 
     (* Edits as strings *)
 
-    type message = string
-    type error   = string * message
-
-    val to_string :
-      offsets:bool -> IO_map.t -> t -> (string, error) Stdlib.result
+    val to_buffer :
+      offsets:bool -> IO_map.t -> t -> (Buffer.t, Buffer.t) Stdlib.result
 
     (* The value of the call [check ~offsets io edit] is [()] if, and
        only if, the positions enabling the individual edits are
@@ -85,7 +82,7 @@ module type S =
        two edits that violate the condition. *)
 
     val check :
-      offsets:bool -> IO_map.t -> t -> (unit, message) Stdlib.result
+      offsets:bool -> IO_map.t -> t -> (unit, string) Stdlib.result
 
     (* The value of [reduce io edit] is an edit whose operational
        semantics is the same as that of [edit] (that is, its
@@ -93,7 +90,7 @@ module type S =
        possibly shorter due to a peep-hole optimisation. *)
 
     val reduce :
-      offsets:bool -> IO_map.t -> t -> (t, message) Stdlib.result
+      offsets:bool -> IO_map.t -> t -> (t, string) Stdlib.result
 
   (*
     (* Optimising maps according to mergeable transformations *)

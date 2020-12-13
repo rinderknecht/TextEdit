@@ -71,8 +71,8 @@ module type S =
     module InBlock  : IN_BLOCK
     module OutBlock : OUT_BLOCK
 
-    module Trans    : ORD
-    module TMap     : Map.S with type key = Trans.t
+    module Trans : ORD
+    module TMap  : Map.S with type key = Trans.t
 
     type t = (InBlock.t * OutBlock.t) TMap.t
     type desc = t

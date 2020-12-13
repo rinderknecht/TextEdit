@@ -29,17 +29,14 @@ module type S =
     val skip  : Trans.t -> until:Pos.t -> t -> t
     val goto  : Trans.t -> char        -> t -> t
 
-    type message = string
-    type error = string * message
-
-    val to_string :
-      offsets:bool -> IO_map.t -> t -> (string, error) Stdlib.result
+    val to_buffer :
+      offsets:bool -> IO_map.t -> t -> (Buffer.t, Buffer.t) Stdlib.result
 
     val check :
-      offsets:bool -> IO_map.t -> t -> (unit, message) Stdlib.result
+      offsets:bool -> IO_map.t -> t -> (unit, string) Stdlib.result
 
     val reduce :
-      offsets:bool -> IO_map.t -> t -> (t, message) Stdlib.result
+      offsets:bool -> IO_map.t -> t -> (t, string) Stdlib.result
   end
 
 module Make (IO_map : IO_map.S) =
@@ -67,72 +64,35 @@ module Make (IO_map : IO_map.S) =
 
     let sprintf = Printf.sprintf
 
-    type message = string
-    type error = string * message
-
-    exception Error of string
-
     let print_copy buffer ~offsets io trans until =
       let trans_str = Trans.to_string trans in
       let open IO_map in
-      let src =
-        match TMap.find_opt trans io.input.drop with
-          Some input -> Input.to_string input
-        | None ->
-           let msg =
-             sprintf "Copy: No input for transform %s." trans_str
-           in raise (Error msg)
-      and dst =
-        match TMap.find_opt trans io.output.drop with
-          Some output -> Output.to_string output
-        | None ->
-            let msg =
-              sprintf "Copy: No input for transform %s." trans_str
-            in raise (Error msg)
+      let src, dst =
+        let input, output = TMap.find trans io in
+        Input.to_string input, Output.to_string output
       and region = until#compact ~file:true ~offsets `Byte in
       let s =
         sprintf "*** Copy up to %s:%s:%s into %s" trans_str src region dst
       in Buffer.add_string buffer s
 
     let print_skip buffer ~offsets io trans until =
-      let trans_str = Trans.to_string trans in
-      let src =
-        let open IO_map in
-        match TMap.find_opt trans io.input.drop with
-          Some input -> Input.to_string input
-        | None ->
-            let msg =
-              sprintf "Skip: No input for transform %s." trans_str
-            in raise (Error msg)
+      let trans_str = Trans.to_string trans
+      and src = TMap.find trans io |> fst |> IO_map.Input.to_string
       and region = until#compact ~file:true ~offsets `Byte in
       let s = sprintf "*** Skip up to %s:%s:%s" trans_str src region
       in Buffer.add_string buffer s
 
     let print_goto buffer io trans char =
-      let trans_str = Trans.to_string trans in
-      let src =
-        let open IO_map in
-        match TMap.find_opt trans io.input.drop with
-          Some input -> Input.to_string input
-        | None ->
-            let msg =
-              sprintf "Goto: No input for transform %s." trans_str
-            in raise (Error msg) in
-      let s = sprintf "*** Go to character %s:%s:'%s'"
-                      trans_str src (Char.escaped char)
+      let trans_str = Trans.to_string trans
+      and src = TMap.find trans io |> fst |> IO_map.Input.to_string in
+      let s = sprintf "*** Go to character %s:%s:%C"
+                      trans_str src char
       in Buffer.add_string buffer s
 
     let print_write buffer io trans string =
-      let trans_str = Trans.to_string trans in
-      let dst =
-        let open IO_map in
-        match TMap.find_opt trans io.output.drop with
-          Some output -> Output.to_string output
-        | None ->
-            let msg =
-              sprintf "Write: No input for transform %s." trans_str
-            in raise (Error msg) in
-      let string = if string = "" then "<empty string>" else string in
+      let trans_str = Trans.to_string trans
+      and dst = TMap.find trans io |> snd |> IO_map.Output.to_string
+      and string = if string = "" then "<empty string>" else string in
       let s = sprintf "*** Write to %s:%s:\n%s" trans_str dst string
       in Buffer.add_string buffer s
 
@@ -140,17 +100,13 @@ module Make (IO_map : IO_map.S) =
       Null ->
         Buffer.add_string buffer "*** Null."; None
     | Copy (trans, until, edit) ->
-        print_copy buffer ~offsets io trans until;
-        Some edit
+        print_copy buffer ~offsets io trans until; Some edit
     | Skip (trans, until, edit) ->
-        print_skip buffer ~offsets io trans until;
-        Some edit
+        print_skip buffer ~offsets io trans until; Some edit
     | Goto (trans, char, edit) ->
-        print_goto buffer io trans char;
-        Some edit
+        print_goto buffer io trans char; Some edit
     | Write (trans, string, edit) ->
-        print_write buffer io trans string;
-        Some edit
+        print_write buffer io trans string; Some edit
 
     let rec print_all_edits buffer ~offsets io edits =
       match print_first_edit buffer ~offsets io edits with
@@ -159,13 +115,13 @@ module Make (IO_map : IO_map.S) =
           Buffer.add_char buffer '\n';
           print_all_edits buffer ~offsets io next_edit
 
-    let to_string ~offsets io edit =
+    let to_buffer ~offsets io edit =
       let buffer = Buffer.create 131 in
       try
         print_all_edits buffer ~offsets io edit;
-        Stdlib.Ok (Buffer.contents buffer)
+        Stdlib.Ok buffer
       with
-        Error msg -> Stdlib.Error (Buffer.contents buffer, msg)
+        Not_found -> Stdlib.Error buffer
 
     let check ~offsets io edit =
       let buffer = Buffer.create 31 in
@@ -189,30 +145,30 @@ module Make (IO_map : IO_map.S) =
           with Not_found -> check map' edit
       in check TMap.empty edit
 
-    (* Two transformations, [trans1] and [trans2], are considered
-       equal by [eq_input] if, and only if, their corresponding
-       handles are equal. *)
+    (* Reductions of edits
 
-    let eq_input io trans1 trans2 =
-      try
-        let in_drop = IO_map.(io.input.drop) in
-        let input_1 = TMap.find trans1 in_drop
-        and input_2 = TMap.find trans2 in_drop
-        in IO_map.Input.equal input_1 input_2
-      with Not_found -> false
+       An edit can be sometimes _reduced_ if it contains some
+       sequences of sub-edits that can be shortened or eliminated
+       entirely, all the while keeping the denotational semantics
+       invariant. Here, for the sake of simplicity, we choose to slide
+       a window of two consecutive elementary edits on a given edit to
+       determine whether a reduction applies: this is a peephole
+       optimisation.
 
-    let eq_output io trans1 trans2 =
-      try
-        let out_drop = IO_map.(io.output.drop) in
-        let output_1 = TMap.find trans1 out_drop
-        and output_2 = TMap.find trans2 out_drop
-        in IO_map.Output.equal output_1 output_2
-      with Not_found -> false
+         This peephole approach is all the more limited by the fact
+       that elementary edits of different transforms can be
+       interleaved. Indeed, by default, two transforms with the same
+       input do not actually share said input, but, instead, operate
+       on copies of it. For example, if an input is a file, then two
+       transforms will have each their own pointer to the file. This
+       is overly conservative if two transforms can actually be merged
+       into one, that is, if one pass over the input file would
+       suffice. The resulting transform is called an _overlay_.
 
-    let eq_io io trans1 trans2 =
-      eq_input io trans1 trans2 && eq_output io trans1 trans2
-
-    (* Reducing an edit by peep-hole.
+         Therefore, the function [reduce] is applied on edits that
+       have already been normalised with respect to a partition of
+       equivalent transforms, so each transform is the representative
+       of a class (see function [normalise] below).
 
        In the following, it is helpful to keep in mind that
 
@@ -225,8 +181,8 @@ module Make (IO_map : IO_map.S) =
 
        No-operations:
 
-         * a empty [Write] can be removed, as well as a [Copy] or
-           a [Skip] applying until the beginning of their inputs;
+         * an empty [Write] can be removed, as well as a [Copy] or a
+           [Skip] applying until the beginning of their inputs.
 
        Reductions to [Null]:
 
@@ -254,80 +210,80 @@ module Make (IO_map : IO_map.S) =
 
          * a [Skip] in combination with a [Copy] (or vice-versa) may
            be removed if their inputs and their ending positions are
-           the same (non-overlapping overlay).
+           the same.
 
          * the combinations [Copy]+[Write] or [Write]+[Copy] cannot be
-           reduced. *)
+           reduced.
+
+       NOTE: We assume in the definition of [reduce] that elementary
+       edits apply to non-decreasing positions. See precondition
+       [check]. *)
 
     let rec reduce io = function
-      (* A [Copy] or [Skip] which apply up to the start of their handle
-         are simply discarded. *)
+    (* A [Copy] or [Skip] which apply up to the start of their input
+       are simply discarded. *)
       Copy (_, pos, next) | Skip (_, pos, next) when Pos.is_min pos ->
         reduce io next
 
-      (* Two consecutive [Copy] or [Skip] such that they apply up to
-         the same position in the same input (a non-overlapping
-         overlay): the [Skip] is discarded. *)
+    (* Two consecutive [Copy] or [Skip] for the same transform such
+       that they apply up to the same position: the [Skip] is
+       discarded. *)
 
-    | Copy (trans1, pos1, (Skip (trans2, pos2, sub) as next)) when pos1 = pos2 ->
-        if   eq_input io trans1 trans2
-        then reduce io (Copy (trans1, pos1, sub))
-        else Copy (trans1, pos1, reduce io next)
+    | Copy (trans1, pos1, Skip (trans2, pos2, sub))
+        when Trans.equal trans1 trans2 && Pos.equal pos1 pos2 ->
+        Copy (trans1, pos1, reduce io sub)
 
-    | Skip (trans1, pos1, (Copy (trans2, pos2, sub) as next)) when pos1 = pos2 ->
-        if   eq_input io trans1 trans2
-        then reduce io next
-        else Skip (trans1, pos1, reduce io next)
+    | Skip (trans1, pos1, Copy (trans2, pos2, sub))
+        when Trans.equal trans1 trans2 && Pos.equal pos1 pos2 ->
+        Copy (trans2, pos2, reduce io sub)
 
     (* In case of two successive [Copy] edits, both from the same
-       input to the same output, the second applying further (or at
-       the same position), then we can get rid of the first [Copy]
-       (because it is contained in the second one, as we assume
-       increasing positions as a precondition to calling [reduce] --
-       see call to [check]). *)
+       transform, the second applying further (or at the same
+       position), then we can get rid of the first [Copy] (because it
+       is contained in the second one, as we assume increasing
+       positions as a precondition to calling [reduce] -- see call to
+       [check]). *)
 
-    | Copy (trans1, stop1, (Copy (trans2, _, _) as next)) ->
-        if   eq_io io trans1 trans2
-        then reduce io next
-        else Copy (trans1, stop1, reduce io next)
+    | Copy (trans1, _, Copy (trans2, pos2, sub))
+        when Trans.equal trans1 trans2 ->
+        Copy (trans2, pos2, reduce io sub)
 
-    (* In case of two successive [Skip] edits, both applying to the
-       same input file, if the position does not decrease (assumed --
-       see call to [check]), then we can get rid of the first [Skip]
-       (again, this is a containment rule). *)
+    (* In case of two successive [Skip] edits, both from the same
+       transformation, and if the positions do not decrease
+       (precondition), then we can get rid of the first [Skip]. *)
 
-    | Skip (trans1, stop1, (Skip (trans2, _, _) as next)) ->
-        if   eq_input io trans1 trans2
-        then reduce io next
-        else Skip (trans1, stop1, reduce io next)
+    | Skip (trans1, _, (Skip (trans2, pos2, _) as next))
+        when Trans.equal trans1 trans2 ->
+        Skip (trans2, pos2, reduce io next)
 
-    (* A [Skip] followed by a [Write] can commute: we choose to bring
-       the [Write] on top. *)
+    (* In the cae of two succesive [Write] edits, both from the same
+       transformation, and if the positions do not decrease
+       (precondition), we can replace them with a single [Write] with
+       the concatenation of their respective strings. *)
 
-    | Skip (trans1, stop, Write (trans2, text, next)) ->
-        reduce io (Write (trans2, text, Skip (trans1, stop, next)))
+    | Write (trans1, text1, Write (trans2, text2, edit))
+        when Trans.equal trans1 trans2 ->
+        reduce io (Write (trans1, text1 ^ text2, edit))
+
+    (* A [Skip] followed by a [Write] can always commute: we choose to
+       bring the [Write] on top to enable its removal by the recursive
+       call if the text to write is empty (see rule below). *)
+
+    | Skip (trans1, pos1, Write (trans2, text, next)) ->
+        reduce io (Write (trans2, text, Skip (trans1, pos1, next)))
 
     (* A [Skip] till the end of the input is equivalent to a
        [Null]. *)
 
     | Skip (_, stop, _) when Pos.is_max stop -> Null
 
-    (* A [Skip] followed by a [Null] can be ignored. *)
+    (* A [Skip] followed by a [Null] is equivalent to a [Null]. *)
 
     | Skip (_, _, Null) -> Null
 
     (* The writing of an empty string can be ignored. *)
 
     | Write (_, "", next) -> reduce io next
-
-    (* If two [Write] edits are composed and they both write to the
-       same output file, then we can replace them with a single
-       [Write] with the concatenation of their respective strings. *)
-
-    | Write (trans1, text1, (Write (trans2, text2, edit) as next)) ->
-        if   eq_output io trans1 trans2
-        then reduce io (Write (trans1, text1 ^ text2, edit))
-        else Write (trans1, text1, reduce io next)
 
     (* The remaining cases apply when no reduction actually takes
        place. *)
@@ -342,4 +298,26 @@ module Make (IO_map : IO_map.S) =
       match check ~offsets io edit with
         Stdlib.Error _ as err -> err
       | Ok () -> Ok (reduce io edit)
+
+    (* Two transformations, [trans1] and [trans2], are considered
+       equal by [eq_input] if, and only if, their corresponding
+       inputs are equal. *)
+(*
+    let eq_input io trans1 trans2 =
+      try
+        let input_1 = TMap.find trans1 io |> fst
+        and input_2 = TMap.find trans2 io |> fst
+        in IO_map.Input.equal input_1 input_2
+      with Not_found -> false
+
+    let eq_output io trans1 trans2 =
+      try
+        let output_1 = TMap.find trans1 io |> snd
+        and output_2 = TMap.find trans2 io |> snd
+        in IO_map.Output.equal output_1 output_2
+      with Not_found -> false
+
+    let eq_io io trans1 trans2 =
+      eq_input io trans1 trans2 && eq_output io trans1 trans2
+ *)
   end

@@ -137,24 +137,26 @@ module Make (IO_map   : IO_map.S)
 
     let make (partition : TEq.partition) (io : IO_map.t) =
       let module OutMap = Map.Make (IO_map.Output) in
-      let out_blocks : OutBlock.t OutMap.t =
-        let delta _trans (_input, output) out_map =
-          if OutMap.mem output out_map then out_map
-          else OutMap.add output (OutBlock.make output) out_map
-        in TMap.fold delta io OutMap.empty in
-      let delta trans (input, output) desc =
-        let out_block = OutMap.find output out_blocks (* No failure *)
+      let delta trans (input, output) (out_map, desc) =
+        let out_map, out_block =
+          match OutMap.find_opt output out_map with
+            Some out_block ->
+              out_map, out_block
+          | None ->
+              let out_block = OutBlock.make output in
+              let out_map   = OutMap.add output out_block out_map
+              in out_map, out_block
         and repr = TEq.repr trans partition in
-        try
-          let in_block, _ = TMap.find repr desc
-          in TMap.add trans (in_block, out_block) desc
-        with
-          Not_found ->
+        match TMap.find_opt repr desc with
+          Some (in_block, _) ->
+            out_map, TMap.add trans (in_block, out_block) desc
+        | None ->
             let blocks = InBlock.make input, out_block in
             let desc   = TMap.add repr blocks desc in
-            if Trans.equal repr trans then desc
-            else TMap.add trans blocks desc
-      in TMap.fold delta io TMap.empty
+            let desc   = if Trans.equal repr trans then desc
+                         else TMap.add trans blocks desc
+            in out_map, desc
+      in TMap.fold delta io (OutMap.empty, TMap.empty) |> snd
 
     let make_desc = make
   end

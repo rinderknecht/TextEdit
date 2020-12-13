@@ -43,8 +43,7 @@ module Make (Trans: ORD) (Input: ORD) (Output: ORD) =
     type io_map = t
 
     let empty = TMap.empty
-
-    let add = TMap.add
+    let add   = TMap.add
 
     let to_buffer io =
       let buffer = Buffer.create 131 in
