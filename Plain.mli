@@ -72,7 +72,7 @@ module type S =
     (* Edits as strings *)
 
     type message = string
-    type error = string * message
+    type error   = string * message
 
     val to_string :
       offsets:bool -> IO_map.t -> t -> (string, error) Stdlib.result
@@ -81,7 +81,7 @@ module type S =
        only if, the positions enabling the individual edits are
        strictly increasing for a given transformation, so they can be
        applied in one pass over the corresponding input. If this
-       condition is not satisfied, and error message reports the first
+       condition is not satisfied, an error message reports the first
        two edits that violate the condition. *)
 
     val check :
