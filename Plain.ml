@@ -42,8 +42,9 @@ module type S =
 
     module Input = IO_map.Input
     module InMap : Map.S with type key = Input.t
+    module TSet  : Set.S with type elt = Trans.t
 
-    val extract_edits : IO_map.t -> t -> t InMap.t
+    val extract_edits : IO_map.t -> t -> (t * TSet.t) InMap.t
 
     module TEq : Partition.S with type item = Trans.t
   end
@@ -383,9 +384,17 @@ module Make (IO_map : IO_map.S) =
           Write (trans, loc, filter t_set edit)
         else filter t_set edit
 
-    let extract_edits io_map edit : edit InMap.t =
+    let rec get_trans = function
+      Null -> TSet.empty
+    | Copy (trans, _, edit) -> TSet.add trans @@ get_trans edit
+    | Skip (trans, _, edit) -> TSet.add trans @@ get_trans edit
+    | Goto (trans, _, edit) -> TSet.add trans @@ get_trans edit
+    | Write (trans, _, edit) -> TSet.add trans @@ get_trans edit
+
+    let extract_edits io_map edit : (edit * TSet.t) InMap.t =
       let apply input t_set =
-        InMap.add input @@ filter t_set edit in
+        let edit' = filter t_set edit in
+        InMap.add input (edit', get_trans edit') in
       InMap.fold apply (sort_inputs io_map) InMap.empty
 
 (*

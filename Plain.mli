@@ -96,8 +96,9 @@ module type S =
 
     module Input = IO_map.Input
     module InMap : Map.S with type key = Input.t
+    module TSet  : Set.S with type elt = Trans.t
 
-    val extract_edits : IO_map.t -> t -> t InMap.t
+    val extract_edits : IO_map.t -> t -> (t * TSet.t) InMap.t
 
     (* Optimising maps according to mergeable transformations *)
 
