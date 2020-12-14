@@ -92,13 +92,19 @@ module type S =
     val reduce :
       offsets:bool -> IO_map.t -> t -> (t, string) Stdlib.result
 
-  (*
+    (* TEMPORARY *)
+
+    module Input = IO_map.Input
+    module InMap : Map.S with type key = Input.t
+
+    val extract_edits : IO_map.t -> t -> t InMap.t
+
     (* Optimising maps according to mergeable transformations *)
 
     module TEq : Partition.S with type item = Trans.t
 
-    val optimise : t -> TEq.partition * t
-
+   (*    val optimise : t -> TEq.partition * t*)
+(*
     (* The call [show ~offsets io edit] prints the edit [edit]
        interpreted with respect to the I/O map [io]. *)
 

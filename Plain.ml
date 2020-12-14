@@ -37,6 +37,15 @@ module type S =
 
     val reduce :
       offsets:bool -> IO_map.t -> t -> (t, string) Stdlib.result
+
+    (* TEMPORARY *)
+
+    module Input = IO_map.Input
+    module InMap : Map.S with type key = Input.t
+
+    val extract_edits : IO_map.t -> t -> t InMap.t
+
+    module TEq : Partition.S with type item = Trans.t
   end
 
 module Make (IO_map : IO_map.S) =
@@ -319,5 +328,126 @@ module Make (IO_map : IO_map.S) =
 
     let eq_io io trans1 trans2 =
       eq_input io trans1 trans2 && eq_output io trans1 trans2
+*)
+  (* Merging pairs of edits
+
+   Given two edits meant to be applied one after the other, we want to
+   know if they can be merged into a single edit, so only one pass on
+   the (same) input file is sufficient, instead of two. If so, those
+   two mergeable edits can then be conceived as non-overlapping
+   overlays reading from the same source and writing to the same
+   target.
+
+   The value of [merge eqc io edit1' edit2'] is an edit equivalent to
+   applying edit [edit1'] and then [edit2'], or else the exception
+   [Disjoint] is raised.
+
+   The value of [norm eqc edit] is an edit equivalent to [edit], but
+   whose kinds (that is, the transformations) have been replaced by
+   their representative in the equivalence class [eqc]. This is not
+   strictly necessary, but it enables [merge] to yield an edit (if
+   exception [Disjoint] was not raised) whose atomic edits are of the
+   same kind, which makes them easier to understand and debug. *)
+
+    module TEq = Partition.Make (Trans)
+
+    module Input = IO_map.Input
+    module InMap = Map.Make (Input)
+    module TSet  = Set.Make (Trans)
+
+    let sort_inputs io_map : TSet.t InMap.t =
+      let apply trans (input, _) in_map =
+        let t_set =
+          match InMap.find_opt input in_map with
+            Some t_set -> TSet.add trans t_set
+          | None -> TSet.singleton trans
+        in InMap.add input t_set in_map
+      in TMap.fold apply io_map InMap.empty
+
+    let rec filter t_set = function
+      Null -> Null
+    | Copy (trans, loc, edit) ->
+        if TSet.mem trans t_set then
+          Copy (trans, loc, filter t_set edit)
+        else filter t_set edit
+    | Skip (trans, loc, edit) ->
+        if TSet.mem trans t_set then
+         Skip (trans, loc, filter t_set edit)
+        else filter t_set edit
+    | Goto (trans, char, edit) ->
+        if TSet.mem trans t_set then
+          Goto (trans, char, filter t_set edit)
+        else filter t_set edit
+    | Write (trans, loc, edit) ->
+        if TSet.mem trans t_set then
+          Write (trans, loc, filter t_set edit)
+        else filter t_set edit
+
+    let extract_edits io_map edit : edit InMap.t =
+      let apply input t_set =
+        InMap.add input @@ filter t_set edit in
+      InMap.fold apply (sort_inputs io_map) InMap.empty
+
+(*
+    let rec norm (part : TEq.partition) =
+      function
+        Null -> Null
+      | Copy (trans, loc, edit) ->
+          Copy  (TEq.repr trans part, loc, norm part edit)
+      | Skip (trans, loc, edit) ->
+          Skip (TEq.repr trans part, loc, norm part edit)
+      | Goto (trans, char, edit) ->
+          Goto (TEq.repr trans part, char, norm part edit)
+      | Write (trans, loc, edit) ->
+          Write (TEq.repr trans part, loc, norm part edit)
+
+    exception Disjoint
+
+    let rec merge (part : TEq.partition) (io : IO_map.t) edit1' edit2' =
+      match edit1', edit2' with
+        Copy (trans1, loc1, edit1), Skip (trans2, loc2, edit2)
+      | Skip (trans1, loc1, edit1), Copy (trans2, loc2, edit2) ->
+          if   eq_input io trans1 trans2
+          then let part = TEq.equiv trans1 trans2 part in
+               if   Pos.lt loc1 loc2
+               then let edit, part = merge part io edit1 edit2' in
+                    Copy (TEq.repr trans1 part, loc1, edit), part
+               else if Pos.lt loc2 loc1
+               then let edit, part = merge part io edit1' edit2 in
+                    Copy (TEq.repr trans2 part, loc2, edit), part
+               else let edit, part = merge part io edit1 edit2 in
+                    Copy (TEq.repr trans2 part, loc2, edit), part
+          else raise Disjoint
+      | Skip (trans1, loc1, edit1), Skip (trans2, loc2, edit2) ->
+          if   eq_input io trans1 trans2
+          then let part = TEq.equiv trans1 trans2 part in
+               if   Pos.lt loc1 loc2
+               then let edit, part = merge part io edit1 edit2' in
+                    Skip (TEq.repr trans1 part, loc1, edit), part
+               else if Pos.lt loc2 loc1
+               then let edit, part = merge part io edit1' edit2 in
+                    Skip (TEq.repr trans2 part, loc2, edit), part
+               else let edit, part = merge part io edit1 edit2 in
+                    Skip (TEq.repr trans2 part, loc2, edit), part
+          else raise Disjoint
+      | Write (trans1, text1, edit1), Write (trans2, text2, edit2) ->
+          if   eq_input io trans1 trans2 && eq_output io trans1 trans2
+          then let part = TEq.equiv trans1 trans2 part
+               and text = text1 ^ text2
+               in merge part io
+                        (Write (TEq.repr trans1 part, text, edit1)) edit2
+          else raise Disjoint
+      | Write (trans1, text1, edit1), Skip (trans2, _, _) ->
+          let part = TEq.equiv trans1 trans2 part in
+          let edit, part = merge part io edit1 edit2'
+          in Write (TEq.repr trans1 part, text1, edit), part
+      | Skip (trans1, _, _), Write (trans2, text2, edit2)->
+          let part = TEq.equiv trans1 trans2 part in
+          let edit, part = merge part io  edit1' edit2
+          in Write (TEq.repr trans2 part, text2, edit), part
+      | Null, e | e, Null ->
+          norm part e, part
+      | _ -> raise Disjoint
  *)
+
   end
